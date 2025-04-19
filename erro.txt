@@ -1,0 +1,2 @@
+strace: Cannot stat './ep1': Arquivo ou diretório inexistente
+strace: Cannot stat './ep1': Arquivo ou diretório inexistente

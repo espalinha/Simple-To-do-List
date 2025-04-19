@@ -1,6 +1,8 @@
 import tkinter as tk
 from tkinter import Menu
+from tkinter import simpledialog, messagebox
 import csv
+import json, os
 
 class App(tk.Tk):
     def __init__(self, divisoes=7, width = 1200, height=700):
@@ -28,8 +30,86 @@ class App(tk.Tk):
         self._read_csv()
         self._read_marked()
         self._adjust_data_consistency()
+        self._read_tags()
+        self._adjust_tags_consistency()
         self._cria_menu()
         self._criar_interface()
+
+    def _open_tag_cloud(self, event, day_idx, task_idx):
+        # fecha nuvem anterior, se houver
+        self._close_tag_cloud()
+
+        self._tag_cloud_day  = day_idx
+        self._tag_cloud_task = task_idx
+
+        win = tk.Toplevel(self)
+        win.overrideredirect(True)
+        win.geometry(f"+{event.x_root+10}+{event.y_root+10}")
+        win.lift()  # garante que fique no topo
+        self._tag_cloud = win
+
+        # handler para clique global
+        def _global_click(ev):
+            # se o clique NÃO foi dentro da nuvem, fecha
+            widget = win.winfo_containing(ev.x_root, ev.y_root)
+            if widget is None or not str(widget).startswith(str(win)):
+                self._close_tag_cloud()
+
+        # registra o handler global
+        self._global_click_id = self.bind_all("<Button-1>", _global_click, add="+")
+
+        # desenha as tags e o botão + (seu código de render aqui)...
+        def render():
+            for w in win.winfo_children():
+                w.destroy()
+
+            tags = self.task_tags[day_idx][task_idx]
+            for idx, tag in enumerate(tags):
+                lbl = tk.Label(win, text=tag, bd=1, relief="solid", padx=4, pady=2)
+                lbl.grid(row=idx//3, column=idx%3, padx=2, pady=2)
+                lbl.bind("<Button-3>",
+                         lambda e, d=day_idx, t=task_idx, tg=tag: self._remove_tag(d, t, tg))
+
+            btn = tk.Button(
+                win,
+                text="+",
+                command=lambda d=day_idx, t=task_idx, r=render: self._add_tag(d, t)
+            )
+            btn.grid(row=(len(tags)//3)+1, column=0, pady=5)
+
+        render()
+
+    def _close_tag_cloud(self):
+        # desregistra handler global se existir
+        if hasattr(self, "_global_click_id"):
+            self.unbind_all("<Button-1>")
+            del self._global_click_id
+
+        if hasattr(self, "_tag_cloud"):
+            try:
+                self._tag_cloud.destroy()
+            except tk.TclError:
+                pass
+            delattr(self, "_tag_cloud")
+    def _add_tag(self, day_idx, task_idx):
+        # fecha a nuvem atual
+        self._close_tag_cloud()
+        novo = simpledialog.askstring("Nova Tag", "Digite a nova tag:", parent=self)
+        if novo:
+            lista = self.task_tags[day_idx][task_idx]
+            if novo not in lista:
+                lista.append(novo)
+                self._save_tags()
+        # reabre para atualizar visual
+        # nota: evento falso só para pegar posição aproximada
+        class E: x_root=100; y_root=100
+        self._open_tag_cloud(E, day_idx, task_idx)
+
+    def _remove_tag(self, day_idx, task_idx, tag):
+        self._close_tag_cloud()
+        if messagebox.askyesno("Remover Tag", f"Remover '{tag}'?"):
+            self.task_tags[day_idx][task_idx].remove(tag)
+            self._save_tags()
 
     def _cria_menu(self):
         mb = tk.Menubutton(self, text="Configurações", relief=tk.RAISED)
@@ -44,6 +124,31 @@ class App(tk.Tk):
         menu.add_command(label="Limpar Marcadores", command=self._clean)
         menu.add_command(label="Salvar Agora", command=self._salvar_todos)
         menu.add_command(label="Sair", command=self._destroy)
+
+    def _read_tags(self):
+        try:
+            with open("tags.json", "r", encoding="utf-8") as f:
+                self.task_tags = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            # inicializa vazio se não existir
+            self.task_tags = [[] for _ in range(self.divisoes)]
+
+    def _adjust_tags_consistency(self):
+    # Garante que task_tags tenha self.divisoes dias
+        while len(self.task_tags) < self.divisoes:
+            self.task_tags.append([])
+        self.task_tags = self.task_tags[:self.divisoes]
+        # Garante que para cada dia, a lista de tags tenha mesmo tamanho de tarefas
+        for d in range(self.divisoes):
+            n_tarefas = len(self.subjects[d]) - 1
+            tags = self.task_tags[d]
+            if len(tags) < n_tarefas:
+                tags += [[] for _ in range(n_tarefas - len(tags))]
+            else:
+                self.task_tags[d] = tags[:n_tarefas]
+    def _save_tags(self):
+       with open("tags.json", "w", encoding="utf-8") as f:
+            json.dump(self.task_tags, f, indent=2, ensure_ascii=False)
 
     def _criar_menu_prioridades(self, event, day_index, task_index):
         menu = Menu(self, tearoff=0)
@@ -69,6 +174,7 @@ class App(tk.Tk):
             bg=self.priority_colors[prioridade]
         )
         self._salvar_todos()
+
     def _adjust_data_consistency(self):
         # Garantir que subjects tenha exatamente 7 dias
         while len(self.subjects) < self.divisoes:
@@ -354,7 +460,8 @@ class App(tk.Tk):
                     # Vincular eventos
                     btn.bind("<Button-1>", lambda e, i=ii, j=k-1: self._toggle_concluido(i, j))
                     btn.bind("<Button-3>", lambda e, i=ii, j=k-1: self._criar_menu_prioridades(e, i, j))
-                    
+                    btn.bind("<Enter>",    lambda e,i=ii,j=k-1: self._open_tag_cloud(e, i, j))
+                    btn.bind("<FocusOut>",    lambda e:                self._close_tag_cloud())
                     btn.pack(side=tk.TOP, padx=5, pady=10, fill=tk.X)
                     self.botoes[ii].append(btn)
 
